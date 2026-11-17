@@ -1,5 +1,8 @@
 """Test attribute selectors."""
 from .. import util
+import signal
+import time
+import soupsieve as sv
 
 
 class TestAttribute(util.TestCase):
@@ -50,3 +53,63 @@ class TestAttribute(util.TestCase):
             ["div", "0", "1", "2", "3", "pre", "4", "6"],
             flags=util.HTML5
         )
+
+    def assert_syntax_error_no_timeout(self, pattern, timeout=3):
+        """
+        Assert pattern fails for syntax error, not timeout error.
+
+        `SIGALRM` is not available on all platforms (Windows), so it is only used to
+        interrupt a runaway pattern when available, but the elapsed time is always checked.
+        """
+
+        def timeout_handler(signum, frame):
+            raise TimeoutError
+
+        has_alarm = hasattr(signal, 'SIGALRM')
+        if has_alarm:
+            previous_handler = signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(timeout)
+
+        passed = False
+        start = time.perf_counter()
+        try:
+            with self.assertRaises(sv.SelectorSyntaxError):
+                sv.compile(pattern)
+            passed = True
+        except TimeoutError:
+            pass
+        finally:
+            if has_alarm:
+                signal.alarm(0)
+                if previous_handler is not None:
+                    signal.signal(signal.SIGALRM, previous_handler)
+        elapsed = time.perf_counter() - start
+        self.assertTrue(passed)
+        self.assertLess(elapsed, timeout)
+
+    def test_bad_attribute_unclused(self):
+        """Test bad attribute fails for syntax error, not timeout error."""
+
+        self.assert_syntax_error_no_timeout('[a="' + ('x' * 300))
+
+    def test_bad_attribute_unclosed_single_quote(self):
+        """Test bad attribute with single quotes fails for syntax error, not timeout error."""
+
+        self.assert_syntax_error_no_timeout("[a='" + ('x' * 300))
+
+    def test_bad_attribute_unclosed_with_escapes(self):
+        """Test bad attribute with escapes fails for syntax error, not timeout error."""
+
+        self.assert_syntax_error_no_timeout('[a="' + ('x' * 150) + '\\"' + ('x' * 150))
+
+    def test_bad_contains_value_unclosed(self):
+        """Test bad `:-soup-contains()` value (same value pattern) fails for syntax error, not timeout error."""
+
+        self.assert_syntax_error_no_timeout(':-soup-contains("' + ('x' * 300))
+        self.assert_syntax_error_no_timeout(":-soup-contains-own('" + ('x' * 300))
+
+    def test_bad_lang_value_unclosed(self):
+        """Test bad `:lang()` value (same value pattern) fails for syntax error, not timeout error."""
+
+        self.assert_syntax_error_no_timeout(':lang("' + ('x' * 300))
+        self.assert_syntax_error_no_timeout(":lang('" + ('x' * 300))
